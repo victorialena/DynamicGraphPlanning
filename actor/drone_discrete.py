@@ -7,7 +7,7 @@ from collections import OrderedDict
 from env.drone_delivery import action
 from rlkit.policies.base import Policy
 from torch.nn import Linear, ReLU, Softmax, LeakyReLU
-from torch_geometric.nn import Sequential, GCNConv, SAGEConv
+from torch_geometric.nn import Sequential, GCNConv, SAGEConv, GATv2Conv
 from warnings import warn
 
 import pdb
@@ -27,7 +27,7 @@ def pick(x):
     return np.random.choice(action, p=probs/sum(probs))
 
 class sysRolloutPolicy(nn.Module, Policy):
-    def __init__(self, n_agents=-1, device=device):
+    def __init__(self, n_agents=-1, device='cpu'):
         super().__init__()
         if n_agents <= 0:
             assert n_agents != 0, "Yeah nah!! this must be a mistake, you don't have any agents in your scene"
@@ -58,7 +58,7 @@ class droneDeliveryModel(nn.Module):
         layer_size = [c_in]+c_hidden+[c_out]
         n_sage = len(layer_size)-n_linear-1
         
-        layers = [(SAGEConv(layer_size[i], layer_size[i+1]), 'x, edge_index -> x')
+        layers = [(GATv2Conv(layer_size[i], layer_size[i+1], heads=8, concat=False), 'x, edge_index -> x')
                   if i < n_sage else
                   Linear(layer_size[i], layer_size[i+1]) 
                   for i in range(len(c_hidden)+1)]
@@ -84,4 +84,41 @@ class droneDeliveryModel(nn.Module):
         if self._upper_bound is not None:
             self._upper_bound = self._upper_bound.to(device)
             
-            
+#-------------- heterogenous GCN model   
+
+class droneDeliveryModelHeterogenous(nn.Module):
+    
+    def __init__(self, c_in, c_out, c_hidden=32, bounds=None):
+        
+        super().__init__()
+        
+        self.lin1_d = Linear(c_in, c_hidden)
+        self.lin1_g = Linear(c_in, c_hidden)
+        self.gat1 = GATv2Conv(c_in, c_hidden, heads=8, concat=False) #, add_self_loops=False)
+        self.lin2_d = Linear(c_hidden, c_hidden)
+        self.lin2_g = Linear(c_hidden, c_hidden)
+        self.gat2 = GATv2Conv(c_hidden, c_hidden, heads=8, concat=False) #, add_self_loops=False)
+        self.lin1 = Linear(c_hidden, c_out)
+        
+        self._upper_bound = bounds
+        self._c_hidden = c_hidden
+    
+    def forward(self, x):
+        y = x.x
+        drone_mask = x.x[:, -1] < 0
+        goal_mask = x.x[:, -1] > 0
+        
+        if self._upper_bound is not None:
+            y = y.div(self._upper_bound-1)
+        
+#         out = torch.zeros((len(y), self._c_hidden))
+        out = self.lin1_d(y)
+        out[goal_mask] = self.lin1_g(y[goal_mask])
+        out = self.gat1(out, x.edge_index).relu()
+        
+        out = self.lin2_d(out)
+        out[goal_mask] = self.lin2_g(y[goal_mask])
+        out = self.gat2(out, x.edge_index).relu()
+        
+        return self.lin1(out)[drone_mask]
+    

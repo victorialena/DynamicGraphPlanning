@@ -15,14 +15,51 @@ from typing import Optional
 from torch_geometric.data import Data
 from torch_geometric.utils import to_dense_adj, to_networkx, to_undirected
 
+# ------------- DEF
+
 sysconfig = namedtuple("sysconfig", 
                        ['maxX', 'maxY', 'goal_reward', 'collision_penalty', 'distance_penalty'], 
-                       defaults=[4, 4, 1., -.1, -.01])
+                       defaults=[4, 4, 1., -1., -.01])
 
 actions = namedtuple("actions", 
                     ['right', 'left', 'up', 'down', 'noop'], 
                     defaults=[np.int64(0), np.int64(1), np.int64(2), np.int64(3), np.int64(4)])
 action = actions()
+
+# ------------- HELPERS
+
+def randomList(m, n):
+    """ Function to generate a list of m random non-negative integers whose sum is n. """ 
+    arr = [0] * m
+    for i in range(n):
+        arr[randint(0, n) % m] += 1
+    return arr
+
+def check_capacity(indices, cap):
+    idx, c = indices.unique(return_counts=True)
+    return (cap[idx] == c).all()
+
+# replace this with combinations (from itertools)
+def sample_unique(n, space):
+    assert n < space.nvec[0]*space.nvec[1], "Impossible query."
+    x = np.array(space.sample(), ndmin=2)
+    while len(x) < n:
+        s = space.sample()
+        if not (s[:2] == x[:, :2]).all(1).any():
+            x = np.vstack((x,s))
+    return x
+
+def sample_proximity(x, n, space, max_dis=1):
+    m = len(x)
+    assert m+n < space.nvec[0]*space.nvec[1], "Impossible query."
+    dist = MultiDiscrete([max_dis+1]*3)
+    
+    while len(x) < m+n:
+        s = x[np.random.randint(m)] + dist.sample()
+        
+        if s in space and not (s[:2] == x[:, :2]).all(1).any():
+            x = np.vstack((x,s))
+    return x
 
 def fully_connect_graph(n_nodes):
     """ Connect the graph s.t. all drones and goals are interconnected. """
@@ -54,6 +91,8 @@ def sparse_connect_graph(n_drones, n_goal, reverse=False, undirected=False):
     if reverse:
         return edge_index.flip(0)
     return edge_index
+
+# ------------- ENV
 
 class droneDelivery(gym.Env):
     """
@@ -93,6 +132,7 @@ class droneDelivery(gym.Env):
                                       [0., 0.]]).to(device)
         self.sspace = MultiDiscrete([self.config.maxX, self.config.maxY, 2])
         self.state = None
+        self.max_sample_distance = 1
         
         if args.graph_type == "full":
             self.generate_g = lambda : fully_connect_graph(self.ndrones+self.ngoals) 
@@ -107,17 +147,18 @@ class droneDelivery(gym.Env):
         
     def get_distances(self):
         dis = torch.cdist(self.state.x[:self.ndrones, :-1], self.state.x[-self.ngoals:, :-1], p=1)
-        return dis.min(1).values
+        return dis.min(1)
     
     def in_collision(self):
         dis = torch.cdist(self.state.x[:self.ndrones, :-1], self.state.x[:self.ndrones, :-1], p=1)
         return torch.triu((dis == 0).float(), 1).sum().item()
     
     def is_terminal(self):
-        return (self.get_distances() == 0).all()
+        dis = self.get_distances()
+        return (dis.values == 0).all() # and check_capacity(dis.indices, self.state.x[-self.ngoals:, -1])
     
     def get_size(self):
-        return torch.Tensor([self.config.maxX, self.config.maxY, 2])
+        return torch.Tensor([self.config.maxX, self.config.maxY, self.ndrones])
     
     def get_channels(self):
         """ Returns in, out channel sizes per agent. """
@@ -129,8 +170,8 @@ class droneDelivery(gym.Env):
     def reward(self, a):
         done = self.is_terminal().float().item()
         return self.config.goal_reward * done + \
-               self.config.collision_penalty * self.in_collision() * (1 - done) + \
-               self.config.distance_penalty * self.get_distances()
+               self.config.collision_penalty * self.in_collision() + \
+               self.config.distance_penalty * self.get_distances().values
                         
     def step(self, a):
         err_msg = f"{a!r} ({type(a)}) is not a valid action."
@@ -147,11 +188,20 @@ class droneDelivery(gym.Env):
     def reset(self, seed: Optional[int] = None):
         if not seed == None:
             super().reset(seed=seed)
+            
+        # 1) avoid collision at start
+#         x = torch.Tensor(sample_unique(self.sspace, self.ndrones+self.ngoals))
         
-        x = torch.Tensor(np.stack([self.sspace.sample() for _ in range(self.ndrones+self.ngoals)]))
+        # 2) sample goal and drones in closer proximity
+        x = sample_unique(self.sspace, self.ndrones)
+        x = torch.Tensor(sample_proximity(x, self.ngoals, self.sspace, max_dis=self.max_sample_distance))
+        
+        # 3) random
+#         x = torch.Tensor(np.stack([self.sspace.sample() for _ in range(self.ndrones+self.ngoals)]))
+        
         # reset the state flags: +1 agent, -1 goal
-        x[:, -1] = 1
-        x[self.ndrones:, -1] = -1        
+        x[:, -1] = -1
+        x[self.ndrones:, -1] = torch.tensor(randomList(self.ngoals, self.ndrones))
         
         self.state = Data(x=x, edge_index=self.generate_g()).to(self._device)
         

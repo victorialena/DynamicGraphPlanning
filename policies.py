@@ -17,7 +17,7 @@ class argmaxDiscretePolicy(nn.Module, Policy):
     
 # redundant code - clean this up
 class epsilonGreedyPolicy(nn.Module, Policy):
-    def __init__(self, qf, space, eps=0.1, dim=1, sim_annealing_fac=1.0, minimum=0.0, device='cpu'):
+    def __init__(self, qf, space, eps=0.1, dim=1, sim_annealing_fac=1.0, minimum=0.05, device='cpu'):
         super().__init__()
         self.qf = qf
         self.aspace = space

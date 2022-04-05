@@ -25,7 +25,7 @@ def mean_reward_per_traj(paths):
     return np.mean([torch.vstack(p['rewards']).sum().item() for p in paths])
 
 def mean_reward(paths):
-    return np.hstack([torch.vstack(sample['rewards']).sum(1).numpy() for p in paths for sample in p]).mean()
+    return np.hstack([torch.vstack(p['rewards']).sum(1).numpy() for p in paths]).mean()
 
 def printSettings(args):
     print(args, '\n')
@@ -40,7 +40,8 @@ def make_plot(avg_r_train, avg_r_test, n_iter, n_epoch, expected_random_pt, expe
     
     if saveas:
         plt.savefig("figs/drone_delivery/"+saveas+".png", dpi=300)
-    plt.show()
+    else:
+        plt.show()
 
     
 # ------------------ Baselines
@@ -155,8 +156,8 @@ def dqtrain(env, args):
 
         target_qf.load_state_dict(deepcopy(qf.state_dict()))
         print("iter ", i+1, " -> loss: ", np.mean(loss[-args.n_iter:]),
-              ", rewards: (train) ", np.mean(avg_r_train[-args.n_iter:]),
-              ", (test) ", avg_r_test[-1])
+              "| rewards: (train) ", np.mean(avg_r_train[-args.n_iter:]),
+              "| (test) ", avg_r_test[-1])
     
     if args.save_to:
         torch.save(qf.state_dict(), "chkpt/"+args.save_to+".pt")
@@ -183,6 +184,7 @@ parser.add_argument("--graph_type", type=str, default="full",
 parser.add_argument("--load_from", type=str, default="", help="load a pretrained network's weights")
 parser.add_argument("--save_to", type=str, default="", help="save trained network params at")
 parser.add_argument("--plot", type=bool, default=True, help="plot training performance curves")
+parser.add_argument("--plot_name", type=str, default="", help="save training progress plot under")
 
 parser.add_argument("--maze_size", type=int, default=5, help="number of drones spawning in the environment")
 parser.add_argument("--ndrones", type=int, default=1, help="number of drones spawning in the environment")
@@ -199,5 +201,6 @@ loss, avg_r_train, avg_r_test = dqtrain(env, args)
 if args.plot:
     net_pt, _ = getNetworkBaseline(args.ndrones, args.ngoals, env.get_max_len(), *env.get_channels())
     heuristic_pt, _ = getHeuristicBaseline(args.ndrones, env.get_max_len())
-    make_plot(avg_r_train, avg_r_test, args.n_iter, args.n_epoch, net_pt, heuristic_pt, args.save_to)
+    make_plot(avg_r_train, avg_r_test, args.n_iter, args.n_epoch, net_pt, heuristic_pt, 
+              args.save_to if args.save_to else args.plot_name)
 

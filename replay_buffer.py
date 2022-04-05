@@ -26,6 +26,8 @@ class anyReplayBuffer():
     def add_sample(self, observation, action, reward, next_observation, terminal, env_info=None, **kwargs):
         data = Data(x=observation.x,
                     edge_index=observation.edge_index,
+#                     node_type=observation.node_type,
+#                     edge_type=observation.edge_type,
                     a=action,
                     r=reward,
                     next_s=next_observation.x,
