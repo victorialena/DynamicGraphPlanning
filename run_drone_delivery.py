@@ -10,6 +10,8 @@ import torch.nn.functional as F
 import torch_geometric
 
 from argparse import ArgumentParser
+from matplotlib import animation
+from matplotlib.animation import FuncAnimation, PillowWriter 
 from torch.optim import Adam
 from torch_geometric.data import Data
 
@@ -43,6 +45,16 @@ def make_plot(avg_r_train, avg_r_test, n_iter, n_epoch, expected_random_pt, expe
     else:
         plt.show()
 
+def simple_animation(env, obs, saveas='animation_1'):
+    fig, ax = plt.subplots(figsize=(6,4))    
+    
+    def env_simple_update(num, obs, ax):
+        ax.clear()
+        env.render(obs[num])
+        ax.set_title("Frame {}".format(num))
+    
+    ani = animation.FuncAnimation(fig, env_simple_update, frames=len(obs), fargs=(obs, ax))
+    ani.save("figs/drone_delivery/"+saveas+'.gif', writer='imagemagick', savefig_kwargs={'facecolor':'white'}, fps=1)
     
 # ------------------ Baselines
 
@@ -87,6 +99,8 @@ def dqtrain(env, args):
     
     qf = droneDeliveryModel(in_channels, out_channels, args.c_hidden, n_linear=args.n_linear, 
                             bounds=env.get_size(), n_agents=args.ndrones, n_goals=args.ngoals)
+#     qf = droneDeliveryModelHeterogenous(in_channels, out_channels, args.c_hidden, bounds=env.get_size())
+    
     print(qf)
     if args.load_from:
         qf.load_state_dict(torch.load("chkpt/"+args.load_from+".pt"))
@@ -94,6 +108,8 @@ def dqtrain(env, args):
 
     target_qf = droneDeliveryModel(in_channels, out_channels, args.c_hidden, n_linear=args.n_linear, 
                                    bounds=env.get_size(), n_agents=args.ndrones, n_goals=args.ngoals)
+#     target_qf = droneDeliveryModelHeterogenous(in_channels, out_channels, args.c_hidden, bounds=env.get_size())
+    
     if args.load_from:
         target_qf.load_state_dict(torch.load("chkpt/"+args.load_from+".pt"))
     target_qf.to(device)
@@ -114,11 +130,16 @@ def dqtrain(env, args):
     loss = []
     avg_r_train = []
     avg_r_test = []
+    
+    save_animation = args.save_to if args.save_to else args.plot_name
 
     for i in range(args.n_epoch):
         qf.train(False)
         paths = eval_path_collector.collect_new_paths(128, max_len, False)
         avg_r_test.append(mean_reward_per_traj(paths))
+        
+#         if i==args.n_epoch-1 and save_animation:
+#             simple_animation(env, paths[np.random.randint(128)]['observations'], save_animation)
 
         paths = expl_path_collector.collect_new_paths(n_samples, max_len, False)
         replay_buffer.add_paths(paths)

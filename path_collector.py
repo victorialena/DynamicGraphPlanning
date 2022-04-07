@@ -10,6 +10,16 @@ import multiprocessing as mp
 
 import pdb
 
+num_cores = 12 #mp.cpu_count()
+max_parallel = 20
+
+"""
+Notes:
+1) Ray paralellisation only works for non-geometric networks. 'gnn.Sequential' can not get pickle-Serialization.
+2) Ray and mp.Pool only work on CPU
+3) mp.Pool can handle up to 25 trajectories per batch.
+4) mp.Pool doesn't like lambda functions (in env.drone_delivery def)
+"""
 
 class MdpPathCollector(PathCollector):
     def __init__(self, env, policy, max_num_epoch_paths_saved=None, rollout_fn=rollout, parallelize=False):
@@ -24,9 +34,12 @@ class MdpPathCollector(PathCollector):
     def collect_new_paths(self, n_paths, max_path_length, discard_incomplete_paths=False, flatten=False):
         paths = []
         if self._multithreading:
-            pool = mp.Pool(mp.cpu_count())
-            paths = pool.starmap(self._rollout_fn, [(self._env, self._policy, max_path_length)]*n_paths)
-            pool.close()
+            pool = mp.Pool(num_cores)
+            while n_paths > 0:
+                tasks = [(env, eval_policy, max_path_length)] * min(n_paths, max_parallel)
+                paths.extend(pool.starmap(self.rollout_fn, tasks))
+                n_paths -= max_parallel
+            pool.terminate()
             
         else:
             for _ in range(n_paths):
