@@ -12,6 +12,7 @@ from gym.spaces import Box, MultiDiscrete
 from numpy.random import choice, randint, rand, uniform
 from typing import Optional
 
+from itertools import combinations, combinations_with_replacement
 from torch_geometric.data import Data
 from torch_geometric.utils import to_dense_adj, to_networkx, to_undirected
 
@@ -22,11 +23,19 @@ sysconfig = namedtuple("sysconfig",
                        defaults=[4, 4, 1., -.1, -.01])
 
 actions = namedtuple("actions", 
-                    ['right', 'left', 'up', 'down', 'noop'], 
+                    ['right', 'left', 'up', 'down', 'drop'],
                     defaults=[np.int64(0), np.int64(1), np.int64(2), np.int64(3), np.int64(4)])
 action = actions()
 
 # ------------- HELPERS
+
+# ------------- 1/
+
+def check_capacity(indices, cap):
+    idx, c = indices.unique(return_counts=True)
+    return (cap[idx] == c).all()
+
+# ------------- 2/
 
 def randomList(m, n):
     """ Function to generate a list of m random non-negative integers whose sum is n. """ 
@@ -35,16 +44,51 @@ def randomList(m, n):
         arr[randint(0, n) % m] += 1
     return arr
 
-def check_capacity(indices, cap):
-    idx, c = indices.unique(return_counts=True)
-    return (cap[idx] == c).all()
+def to_pos(arr, x, n):
+    rows = torch.div(arr, x, rounding_mode='trunc') # "out//y" deprecated
+    return torch.vstack((rows, arr%x, -torch.ones(n), torch.ones(n))).T
 
-def sample_unique(x, y, n):   
-    assert n < x*y, "Impossible query."
-    
+def sample_unique(x: int, y: int, n: int):   
+    assert n < x*y, "Impossible query."    
     out = torch.randperm(x*y)[:n]
-    rows = torch.div(out, y, rounding_mode='trunc') # "out//y" deprecated
-    return torch.vstack((rows, out%y, -torch.ones(n))).T
+    return to_pos(out, x, n)
+
+def sample_near(x: int, y: int, nd: int, ng: int, nsteps: int):   
+    goals = torch.randperm(x*y)[:ng]
+    candidates = (goals + torch.tensor([sum(_) for _ in \
+                                        combinations_with_replacement([1, -1, x, -x], nsteps)]).unsqueeze(1)).flatten().unique()
+    
+    filter1 = (candidates >= 0) * (candidates < x*y)
+    filter2 = ~(candidates.repeat(len(goals), 1).T == goals).any(1)
+    candidates = candidates[filter1*filter2]
+    len(candidates)>=nd, "Cannot sample: Maze is too small for nr of drones."
+    
+    idx = torch.randperm(len(candidates))[:nd]
+    out = torch.hstack((candidates[idx],goals))
+    return to_pos(out, x, nd+ng)
+
+def sample_state(x, y, nd, ng, nsteps=-1):
+    """
+    # Sample unique positions for each goal and drone (no initial collision) and store goal capacity in 
+    # feature vector. Drones have capacity -1. +/- denotes the node type!      
+    """
+    if nsteps>0:
+        try:
+            state = sample_near(x, y, nd, ng, nsteps)
+            state[nd:, -2] = torch.ones(ng)
+            idx, counts = torch.cdist(state[:4, :2], state[4:, :2], p=1).min(1).indices.unique(return_counts=True)
+            state[nd+idx, -1] = counts.to(torch.float)
+            return state
+        except:
+            pass
+    
+    state = sample_unique(x, y, nd+ng)
+    state[nd:, -2] = torch.ones(ng)
+    state[nd:, -1] = torch.tensor(randomList(ng, nd))
+    
+    return state
+
+# ------------- 3/
 
 def fully_connect_graph(n_nodes):
     """ Connect the graph s.t. all drones and goals are interconnected. """
@@ -78,7 +122,7 @@ def sparse_connect_graph(n_drones, n_goal, reverse=False, undirected=False):
     return edge_index
 
 # ------------- ENV
-
+ 
 class droneDelivery(gym.Env):
     """
     ### Description
@@ -109,15 +153,16 @@ class droneDelivery(gym.Env):
         self.ndrones = args.ndrones
         self.ngoals = args.ngoals
         
+        # L, R, up, down, drop payload
         self.aspace = MultiDiscrete([len(action)]*self.ndrones)
         self.a2vecmap = torch.Tensor([[1., 0.],
                                       [-1, 0.],
                                       [0., 1.],
                                       [0, -1.],
                                       [0., 0.]]).to(device)
-        self.sspace = MultiDiscrete([self.config.maxX, self.config.maxY, 2])
+        # x, y, d|g, payload|cap
+        self.sspace = MultiDiscrete([self.config.maxX, self.config.maxY, 2, args.ndrones])
         self.state = None
-        self.max_sample_distance = 1
         
         if args.graph_type == "full":
             self.generate_g = lambda : fully_connect_graph(self.ndrones+self.ngoals) 
@@ -129,21 +174,27 @@ class droneDelivery(gym.Env):
             assert False, "Unspecified graph type."
         
         self._device = device
+        self._max_sample_distance = args.max_sample_distance
+    
+    def drone_mask(self):
+        return self.state.x[:, 2] < 0
+    
+    def goal_mask(self):
+        return self.state.x[:, 2] > 0
         
     def get_distances(self):
-        dis = torch.cdist(self.state.x[:self.ndrones, :-1], self.state.x[-self.ngoals:, :-1], p=1)
+        dis = torch.cdist(self.state.x[self.drone_mask(), :2], self.state.x[self.goal_mask(), :2], p=1)
         return dis.min(1)
     
     def in_collision(self):
-        dis = torch.cdist(self.state.x[:self.ndrones, :-1], self.state.x[:self.ndrones, :-1], p=1)
+        dis = torch.cdist(self.state.x[self.drone_mask(), :2], self.state.x[self.drone_mask(), :2], p=1)
         return torch.triu((dis == 0).float(), 1).sum().item()
     
     def is_terminal(self):
-        dis = self.get_distances()
-        return (dis.values == 0).all() and check_capacity(dis.indices, self.state.x[-self.ngoals:, -1])
+        return (self.state.x[self.goal_mask(), -1] == 0).all()
     
     def get_size(self):
-        return torch.Tensor([self.config.maxX, self.config.maxY, self.ndrones])
+        return torch.Tensor([self.config.maxX, self.config.maxY, 2, self.ndrones])
     
     def get_channels(self):
         """ Returns in, out channel sizes per agent. """
@@ -153,34 +204,40 @@ class droneDelivery(gym.Env):
         return self.config.maxX + self.config.maxY - 1
         
     def reward(self, a):
+        # TODO: should distance penalty be only active for drones that carry a payload?
         done = self.is_terminal().float().item()
-        return self.config.goal_reward * done + \
-               self.config.collision_penalty * self.in_collision() + \
-               self.config.distance_penalty * self.get_distances().values
+        return (self.config.goal_reward/self.ndrones) * done + \
+               (self.config.collision_penalty/2.) * self.in_collision() + \
+               (self.config.distance_penalty/self.ndrones) * self.get_distances().values
                         
     def step(self, a):
         err_msg = f"{a!r} ({type(a)}) is not a valid action."
         assert self.aspace.contains(a.cpu().numpy() if torch.is_tensor(a) else a) , err_msg
         
         reward = self.reward(a)
+        dropping = ((a == 4) * (self.state.x[self.drone_mask(), -1]>0))
         a = self.a2vecmap[a]
         done = self.is_terminal()
     
-        self.state.x[:self.ndrones, :-1] = (self.state.x[:self.ndrones, :-1]+a).clamp(min=0, max=self.config.maxX)
+        self.state.x[self.drone_mask(), :2] = (self.state.x[self.drone_mask(), :2]+a).clamp(min=0, max=self.config.maxX)
+        
+        # cargo management
+        gidx = torch.where(self.drone_mask())[0]
+        self.state.x[gidx[dropping], -1] -= 1
+        self.state.x[self.drone_mask()][dropping, -1] -= 1
+        dis = self.get_distances()
+        idx, load = dis.indices[(dis.values == 0) * dropping].unique(return_counts=True)
+        didx = torch.where(self.goal_mask())[0]
+        self.state.x[didx[idx], -1] -= load     
+        self.state.x[:, -1] = self.state.x[:, -1].clamp(min=0.)
         
         return deepcopy(self.state), deepcopy(reward), deepcopy(done), {}
 
     def reset(self, seed: Optional[int] = None):
         if not seed == None:
             super().reset(seed=seed)
-        
-        # Sample unique positions for each goal and drone (no initial collision) and store goal capacity in 
-        # feature vector. Drones have capacity -1. +/- denotes the node type!      
-        x = sample_unique(self.config.maxX, self.config.maxY, self.ndrones+self.ngoals)
-        x[self.ndrones:, -1] = torch.tensor(randomList(self.ngoals, self.ndrones))
-        
-        # TODO: sample proximity
-
+                
+        x = sample_state(self.config.maxX, self.config.maxY, self.ndrones, self.ngoals, self._max_sample_distance)
         self.state = Data(x=x, edge_index=self.generate_g()).to(self._device)
         
         return deepcopy(self.state)

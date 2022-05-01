@@ -4,6 +4,8 @@ import torch.nn as nn
 
 from numpy.random import rand
 from rlkit.policies.base import Policy
+
+from actor.drone_discrete import move2closestGoal
     
 class argmaxDiscretePolicy(nn.Module, Policy):
     def __init__(self, qf, dim=1):
@@ -27,13 +29,20 @@ class epsilonGreedyPolicy(nn.Module, Policy):
         self.saf = np.clip(sim_annealing_fac, .0, 1.)
         self.min = minimum
         self.device = device
+        self.heuristic = False
         
     def simulated_annealing(self):
         self.eps = max(self.min, self.eps*self.saf)
+        
+    def set_heuristic(self, flag):
+        self.heuristic = flag
 
     def get_action(self, obs):
         if rand() < self.eps:
+            if self.heuristic:
+                return move2closestGoal(obs).to(self.device), {}
             return torch.Tensor(self.aspace.sample()).to(torch.long).to(self.device), {}
+
         q_values = self.qf(obs)
         return q_values.argmax(self.dim), {}
    
