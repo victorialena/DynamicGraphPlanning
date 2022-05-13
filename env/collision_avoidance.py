@@ -17,11 +17,13 @@ from itertools import combinations, combinations_with_replacement
 from torch_geometric.data import Data
 from torch_geometric.utils import to_dense_adj, to_networkx, to_undirected
 
+# https://courses.cit.cornell.edu/mae5070/DynamicEquations.pdf
+
 # ------------- DEF
 
-sysconfig = namedtuple("sysconfig", ['maxXYZ', 'collision_penalty', 'collision_thresh', 
+sysconfig = namedtuple("sysconfig", ['maxXYZ', 'collision_penalty', 'collision_thresh', 'action_cost',
                                      'dt', 'max_v', 'min_v', 'dv'], 
-                       defaults=[720000., -.1, 1., # meters
+                       defaults=[720000., -1., 1., -.01, # meters
                                  1., 150., 200., 2.]) # tick = 1s and v [m/s]
 
 # ------------- HELPERS
@@ -107,9 +109,13 @@ class collisionAvoidance(gym.Env):
         self.aspace = Box(low=np.array([-deg2rad(1)]*3+[-self.config.dv]), 
                           high=np.array([deg2rad(1)]*3+[self.config.dv]), 
                           dtype=np.float32)
-        self.sspace = Box(low=np.array([0]*3+[-np.pi]*3+[self.config.min_v]), 
-                          high=np.array([self.config.maxXYZ]*3+[np.pi]*3+[self.config.max_v]), 
+        self.sspace = Box(low=np.array([-self.config.maxXYZ//2]*3+[-np.pi]*3+[self.config.min_v]), 
+                          high=np.array([self.config.maxXYZ//2]*3+[np.pi]*3+[self.config.max_v]), 
                           dtype=np.float32)
+        
+#         self._isspace = Box(low=np.array([0]*3+[-np.deg2rad(45), -np.deg2rad(30), -np.pi]+[self.config.min_v]), 
+#                             high=np.array([self.config.maxXYZ]*3+[np.deg2rad(45), np.deg2rad(30), np.pi]+[self.config.max_v]),
+#                             dtype=np.float32)
         
         self.state = None
         self._device = device
@@ -118,8 +124,8 @@ class collisionAvoidance(gym.Env):
         return torch.cdist(self.state.x[:, :3], self.state.x[:, :3], p=2)
     
     def in_collision(self):
-        dis = self.get_distances() < (self.config.collision_thresh / self.config.maxXYZ)
-        return torch.triu(dis, 1).sum().item()
+        dis = self.get_distances() < self.config.collision_thresh
+        return torch.triu(dis, 1).sum(1) #.sum().item()
     
     def is_terminal(self):
         return False
@@ -132,7 +138,10 @@ class collisionAvoidance(gym.Env):
         return self.sspace.shape[0], self.aspace.shape[0]
         
     def reward(self, a):
-        return self.config.collision_penalty * self.in_collision() * 2
+        action_cost = abs(a)
+        action_cost[:,-1] /= 100.
+        return self.config.collision_penalty * self.in_collision() + \
+               self.config.action_cost * action_cost.sum(1)
                         
     def step(self, a):
         err_msg = f"{a!r} ({type(a)}) is not a valid action."
@@ -149,7 +158,7 @@ class collisionAvoidance(gym.Env):
             self.state.x[i] = propagate_s(s, _a, self.config.dt)
         
         # wrap to pi and bounds
-        self.state.x[:, :3] = self.state.x[:, :3] % self.config.maxXYZ
+        self.state.x[:, :3] = ((self.state.x[:, :3] + (self.config.maxXYZ//2)) % self.config.maxXYZ) - (self.config.maxXYZ//2)
         self.state.x[:, 3:-1] = wrap(self.state.x[:, 3:-1])
         self.state.x[:, -1] = self.state.x[:, -1].clamp(min=self.config.min_v, max=self.config.max_v)
         
@@ -159,19 +168,17 @@ class collisionAvoidance(gym.Env):
         if not seed == None:
             super().reset(seed=seed)
                 
-        x = torch.stack([torch.tensor(self.sspace.sample()) for _ in range(self.nagents)])
-        x[:, 3:-1] = 0. # reset roll, pitch, yaw
+#         x = torch.stack([torch.tensor(self.sspace.sample()) for _ in range(self.nagents)])
+#         x[:, 3:-2] = 0.05*x[:, 3:-2] # reset roll, pitch
+        self.nagents = 4
+        x = torch.tensor([[self.config.maxXYZ//8, 0, 0, 0, 0, -np.pi, self.config.max_v],
+                          [0, self.config.maxXYZ//8, 0, 0, 0, np.pi/2, self.config.max_v],
+                          [-self.config.maxXYZ//8, 0, 0, 0, 0, 0, self.config.max_v],
+                          [0, -self.config.maxXYZ//8, 0, 0, 0, -np.pi/2, self.config.max_v]])
+    
         self.state = Data(x=x, edge_index=fully_connect_graph(self.nagents)).to(self._device)
         
         return deepcopy(self.state)
-
-#     def render(self, s = None):
-#         if not s:
-#             s = self.state
-#         g = torch_geometric.utils.to_networkx(s, to_undirected=False)
-#         colors = np.array(['orange' if _[-1]<0 else 'green' for _ in s.x])
-#         pos = {i: x[:2].numpy() for i, x in enumerate(s.x)}
-#         nx.draw(g, pos=pos, node_color=colors)
     
     def seed(self, n: int):
         super().seed(n)

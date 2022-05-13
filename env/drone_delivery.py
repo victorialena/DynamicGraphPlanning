@@ -76,12 +76,12 @@ def sample_state(x, y, nd, ng, nsteps=-1):
         try:
             state = sample_near(x, y, nd, ng, nsteps)
             state[nd:, -2] = torch.ones(ng)
-            idx, counts = torch.cdist(state[:4, :2], state[4:, :2], p=1).min(1).indices.unique(return_counts=True)
+            idx, counts = torch.cdist(state[:nd, :2], state[nd:, :2], p=1).min(1).indices.unique(return_counts=True)
+            state[nd:, -1] = 0.
             state[nd+idx, -1] = counts.to(torch.float)
             return state
         except:
             pass
-    
     state = sample_unique(x, y, nd+ng)
     state[nd:, -2] = torch.ones(ng)
     state[nd:, -1] = torch.tensor(randomList(ng, nd))
@@ -188,10 +188,10 @@ class droneDelivery(gym.Env):
     
     def in_collision(self):
         dis = torch.cdist(self.state.x[self.drone_mask(), :2], self.state.x[self.drone_mask(), :2], p=1)
-        return torch.triu((dis == 0).float(), 1).sum().item()
+        return (dis == 0).float().sum(1)-1.
     
     def is_terminal(self):
-        return (self.state.x[self.goal_mask(), -1] == 0).all()
+        return (self.state.x[self.drone_mask(), -1] == 0).all()
     
     def get_size(self):
         return torch.Tensor([self.config.maxX, self.config.maxY, 2, self.ndrones])
@@ -201,12 +201,17 @@ class droneDelivery(gym.Env):
         return self.sspace.shape[0], self.aspace.nvec[0]
             
     def get_max_len(self):
-        return self.config.maxX + self.config.maxY - 1
+        return self.config.maxX #+ self.config.maxY - 1
         
     def reward(self, a):
         # TODO: should distance penalty be only active for drones that carry a payload?
         done = self.is_terminal().float().item()
-        return (self.config.goal_reward/self.ndrones) * done + \
+        
+        dis = self.get_distances()
+        dropping = ((a == 4) * (self.state.x[self.drone_mask(), -1]>0) * (dis.values == 0) * \
+                   (self.state.x[self.goal_mask(), -1][dis.indices]>0)).float()
+        
+        return (self.config.goal_reward) * dropping + \
                (self.config.collision_penalty/2.) * self.in_collision() + \
                (self.config.distance_penalty/self.ndrones) * self.get_distances().values
                         
@@ -224,7 +229,7 @@ class droneDelivery(gym.Env):
         # cargo management
         gidx = torch.where(self.drone_mask())[0]
         self.state.x[gidx[dropping], -1] -= 1
-        self.state.x[self.drone_mask()][dropping, -1] -= 1
+
         dis = self.get_distances()
         idx, load = dis.indices[(dis.values == 0) * dropping].unique(return_counts=True)
         didx = torch.where(self.goal_mask())[0]

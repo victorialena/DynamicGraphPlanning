@@ -88,7 +88,7 @@ class MLPActorCritic(nn.Module):
             pi = self.pi._distribution(obs)
             a = pi.sample().sigmoid() #TODO: should we be doing this?
             logp_a = self.pi._log_prob_from_distribution(pi, a)
-            v = self.v(obs).sum(1)
+            v = self.v(obs) #.sum(-1)
         return a, v, logp_a #a.numpy(), v.numpy(), logp_a.numpy()
 
     def act(self, obs):

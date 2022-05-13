@@ -55,16 +55,20 @@ class sysMultiRolloutPolicy(nn.Module, Policy):
     def get_action(self, obs):
         goal_mask = obs.x[:, -2] > 0
         drone_mask = obs.x[:, -2] < 0
+        active_drone_mask = drone_mask * (obs.x[:, -1] > 0)
+        active_given_drone_mask = obs.x[drone_mask][:, -1] > 0
         
         xg = obs.x[goal_mask]
-        xg = torch.repeat_interleave(xg, xg[:, -1].to(torch.int64), dim=0)[:drone_mask.sum().item()]
+        xg = torch.repeat_interleave(xg, xg[:, -1].to(torch.int64), dim=0)[:active_drone_mask.sum().item()]
         
+        out = torch.Tensor([4]*sum(drone_mask)).to(torch.long).to(self.device)
         if len(xg)==0: #empty
-            return torch.Tensor([4]*sum(drone_mask)).to(torch.long).to(self.device), {}
+            return out, {}
         
-        xd = obs.x[drone_mask]
+        xd = obs.x[active_drone_mask]
         dis = (xg[:, :2] - xd[:, :2])
-        return torch.Tensor([pick(d) for d in dis]).to(torch.long).to(self.device), {}
+        out[active_given_drone_mask] = torch.Tensor([pick(d) for d in dis]).to(torch.long) #.to(self.device)
+        return out, {}
     
 #-------------- GCN model   
         
@@ -79,14 +83,13 @@ class droneDeliveryModel(nn.Module):
         assert len(c_hidden) > 0, "Hidden dimension can not be zero => no GCN layer."
         layer_size = [c_in]+c_hidden+[c_out]
         n_sage = len(layer_size)-n_linear-1
-        n_heads = kwargs['heads'] if 'heads' in kwargs.keys() else 4
+        n_heads = kwargs['heads'] if 'heads' in kwargs.keys() else [4]*len(layer_size)
         
         layers = [(GATv2Conv(layer_size[i],
-                                 layer_size[i+1]//(n_heads if i<n_sage-1 else 1), 
-                                 heads=n_heads, 
-                                 concat=(i<n_sage-1), 
-                                 dropout=kwargs['dropout']), 'x, edge_index -> x')
-                  #(gnn.SAGEConv(layer_size[i], layer_size[i+1]), 'x, edge_index -> x')
+                             layer_size[i+1]//(n_heads[i] if i<n_sage-1 else 1), 
+                             heads=n_heads[i], 
+                             concat=(i<n_sage-1), 
+                             dropout=kwargs['dropout']), 'x, edge_index -> x')
                   if i < n_sage else
                   nn.Linear(layer_size[i], layer_size[i+1]) 
                   for i in range(len(c_hidden)+1)]
@@ -110,9 +113,71 @@ class droneDeliveryModel(nn.Module):
         if self._upper_bound is not None:
             self._upper_bound = self._upper_bound.to(device)
 
-#-------------- GCN model (repeated)         
+#-------------- GCN model (repeated)
 
-class droneDeliveryModel_rep(nn.Module):
+class droneDeliveryModel_rep3(nn.Module):
+    
+    def __init__(self, c_in, c_out, c_hidden, k, bounds=None, **kwargs):
+        
+        super().__init__()
+        
+        self.encoder = nn.Linear(c_in, c_hidden)
+        self.sage = gnn.SAGEConv(c_hidden, c_hidden)
+        self.gat = GATv2Conv(c_hidden, c_out, heads=4, concat=False, dropout=kwargs['dropout'])
+        self._k = k
+        
+        self._device = 'cpu'
+        self._upper_bound = bounds 
+
+    def forward(self, x):
+        y = x.x
+        drone_mask = x.x[:, -2] < 0
+        if self._upper_bound is not None:
+            y = y.div(self._upper_bound-1)
+            
+        out = self.encoder(y).relu()
+        for i in range(self._k):
+            out = self.sage(out, x.edge_index).relu()
+        return self.gat(out, x.edge_index)[drone_mask]
+    
+    def to(self, device):
+        super().to(device)
+        self._device = device
+        if self._upper_bound is not None:
+            self._upper_bound = self._upper_bound.to(device)
+
+class droneDeliveryModel_rep1(nn.Module):
+    
+    def __init__(self, c_in, c_out, c_hidden, k, bounds=None, **kwargs):
+        
+        super().__init__()
+        
+        self.encoder = nn.Linear(c_in, c_hidden)
+        self.layer = gnn.SAGEConv(c_hidden, c_hidden)
+        self.decoder = nn.Linear(c_hidden, c_out)
+        self._k = k
+        
+        self._device = 'cpu'
+        self._upper_bound = bounds 
+
+    def forward(self, x):
+        y = x.x
+        drone_mask = x.x[:, -2] < 0
+        if self._upper_bound is not None:
+            y = y.div(self._upper_bound-1)
+            
+        out = self.encoder(y).relu()
+        for i in range(self._k):
+            out = self.layer(out, x.edge_index).relu()
+        return self.decoder(out)[drone_mask]    
+    
+    def to(self, device):
+        super().to(device)
+        self._device = device
+        if self._upper_bound is not None:
+            self._upper_bound = self._upper_bound.to(device)
+
+class droneDeliveryModel_rep2(nn.Module):
     
     def __init__(self, c_in, c_out, c_hidden=[], bounds=None, k=[], **kwargs):
         

@@ -25,7 +25,6 @@ def discount_cumsum(x, discount):
     return (x.repeat(n,1)*A).sum(-1)
     
 def discount_cumsum_n(X, discount):
-    pdb.set_trace()
     return torch.vstack([discount_cumsum(x, discount) for x in X.T]).T
 
 def statistics_scalar(x, with_min_and_max=False):
@@ -69,23 +68,20 @@ class PPOBuffer:
         """ last_val should be 0 if the trajectory ended because the agent reached a terminal state, 
         and otherwise should be V(s_T), the value function estimated for the last state. """
         
-        if torch.is_tensor(last_val):
-            last_val = last_val.item()
-#             last_val = torch.ones(self.rew_buf[-1].shape)
+        assert (torch.is_tensor(last_val)) and (last_val.shape == self.val_buf[-1].shape)
 
         path_slice = torch.arange(self.path_start_idx[-1], self.get_size())
-#         pdb.set_trace()
-        rews = torch.tensor(grep(self.rew_buf, path_slice)+[last_val])
-        vals = torch.tensor(grep(self.val_buf, path_slice)+[last_val])
+        rews = torch.stack(grep(self.rew_buf, path_slice)+[last_val])
+        vals = torch.stack(grep(self.val_buf, path_slice)+[last_val])
         
-        # the next two lines implement GAE-Lambda advantage calculation
+        # GAE-Lambda advantage calculation
         deltas = rews[:-1] + self.gamma * vals[1:] - vals[:-1]
-        self.adv_buf.extendleft(discount_cumsum(deltas, self.gamma * self.lam))
+        self.adv_buf.extendleft(discount_cumsum_n(deltas, self.gamma * self.lam))
         
-        # the next line computes rewards-to-go, to be targets for the value function
-        self.ret_buf.extendleft(discount_cumsum(rews, self.gamma)[:-1])
+        # Compute rewards-to-go, targets for the value function
+        self.ret_buf.extendleft(discount_cumsum_n(rews, self.gamma)[:-1])
         
-        # clean out old trajectories
+        # Clean out old trajectories
         self.path_start_idx = self.path_start_idx[self.path_start_idx>=0]
         assert self.is_valid(), "Invalid buffer"
          
@@ -93,7 +89,7 @@ class PPOBuffer:
         self.path_start_idx = np.append(self.path_start_idx, self.get_size())
 
     def get(self):
-        # the next two lines implement the advantage normalization trick
+        # Advantage normalization trick
         adv_buf = to_batch(self.adv_buf)
         adv_mean, adv_std = statistics_scalar(adv_buf)
         adv_buf = (adv_buf - adv_mean) / adv_std
@@ -102,7 +98,7 @@ class PPOBuffer:
         
         data = dict(obs=Batch.from_data_list(self.obs_buf), act=to_batch(self.act_buf), ret=to_batch(self.ret_buf),
                     adv=adv_buf, logp=to_batch(self.logp_buf))
-        return data #{k: torch.as_tensor(v, dtype=torch.float32) for k,v in data.items()}
+        return data
     
     def get_size(self):
         return len(self.rew_buf)
@@ -112,6 +108,16 @@ class PPOBuffer:
     
     def is_valid(self):
         return len(self.act_buf) == len(self.adv_buf)
+    
+    def clear(self):
+        self.obs_buf.clear()
+        self.act_buf.clear()
+        self.adv_buf.clear()
+        self.rew_buf.clear()
+        self.ret_buf.clear() 
+        self.val_buf.clear()
+        self.logp_buf.clear()
+        self.path_start_idx = np.array([],dtype=int)
         
 
 class anyReplayBuffer():
