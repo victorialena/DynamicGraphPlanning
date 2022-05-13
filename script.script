@@ -7,3 +7,5 @@ python run_drone_delivery.py --ndrones 10 --ngoals 8 --gamma 0.98 --maze_size 12
 python run_drone_delivery.py --ndrones 12 --ngoals 8 --gamma 0.98 --maze_size 12 --n_epoch 500 --graph_type sparse --c_hidden 128 32 16 --n_linear 2 --plot_name gat12v1f --save_to gat12v1f --max_sample_distance 1 -saf 0.9 -bs 512
 
 python run_drone_delivery.py --ndrones 10 --ngoals 8 --gamma 0.98 --maze_size 12 --n_epoch 500 --graph_type sparse --c_hidden 128 32 16 --n_linear 2 --plot_name gat12v1e --save_to gat12v1e --max_sample_distance 4 -saf 0.9 --saf_stepsize 100 --heuristic_pol_len 200
+
+python run_drone_delivery.py --ndrones 10 --ngoals 8 --gamma 0.98 --maze_size 12 --n_epoch 500 --graph_type sparse --c_hidden 128 32 16 --n_linear 2 --plot_name gat12v1f --save_to gat12v1f --max_sample_distance 4 -saf 0.9 --saf_stepsize 100 --heuristic_pol_len 200 --replay_buffer_cap 5000 --n_samples 128

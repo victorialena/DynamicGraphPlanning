@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import torch_geometric.nn as gnn
 
 from collections import OrderedDict
-from gatv2_conv import GATv2Conv
+from actor.gatv2_conv import GATv2Conv
 from rlkit.policies.base import Policy
 from warnings import warn
 
