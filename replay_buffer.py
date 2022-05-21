@@ -189,3 +189,77 @@ class anyReplayBuffer():
         return OrderedDict([
             ('size', self.get_size())
         ])
+    
+class replayBuffer():
+    def __init__(self, max_replay_buffer_size, replace = True, prioritized=False):
+        self._max_replay_buffer_size = max_replay_buffer_size        
+        self._replace = replace
+        self._prioritized = prioritized
+        
+        self._weights = deque([], max_replay_buffer_size)
+        self._observations = deque([], max_replay_buffer_size)            
+
+    def add_sample(self, s, graph, action, reward, next_s, terminal, weight):
+        data = Data(x=s,
+                    edge_index=graph,
+                    a=action,
+                    r=reward,
+                    next_s=next_s,
+                    t=terminal)
+        self._observations.appendleft(data)
+        self._weights.appendleft(weight) #reward.sum().item() if is_tensor(reward) else reward)
+    
+    def add_paths(self, paths, g):
+        for path in paths:
+            self.add_path(path, g)
+    
+    def add_path(self, path, g):
+        dr = torch.stack(path["rewards"]).sum(-1)
+        dr = torch.hstack((dr[1:]-dr[:-1], torch.zeros(1,)))
+        for obs, action, reward, next_obs, terminal, w in zip(path["observations"],
+                                                              path["actions"],
+                                                              path["rewards"],
+                                                              path["next_observations"],
+                                                              path["terminals"],
+                                                              dr):
+            self.add_sample(s=obs,
+                            graph=g,
+                            action=action,
+                            reward=reward,
+                            next_s=next_obs,
+                            terminal=terminal,
+                            weight=abs(w))
+        self.terminate_episode()
+        
+    def terminate_episode(self):
+        pass
+
+    def random_batch(self, batch_size):
+        prio = softmax(self._weights) if self._prioritized else None
+        indices = np.random.choice(self.get_size(), 
+                                   size=batch_size, p=prio, 
+                                   replace=self._replace or self._size < batch_size)
+        if not self._replace and self._size < batch_size:
+            warn('Replace was set to false, but is temporarily set to true \
+            because batch size is larger than current size of replay.')
+        
+        batch = grep(self._observations, indices)
+        
+        return Batch.from_data_list(batch)
+    
+    def get_size(self):
+        return len(self._weights)
+        
+    def rebuild_env_info_dict(self, idx):
+        return self.batch_env_info_dict(idx)
+
+    def batch_env_info_dict(self, indices):
+        return {}
+
+    def num_steps_can_sample(self):
+        return self.get_size()
+
+    def get_diagnostics(self):
+        return OrderedDict([
+            ('size', self.get_size())
+        ])

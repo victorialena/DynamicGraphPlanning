@@ -7,6 +7,7 @@ from rlkit.core.eval_util import create_stats_ordered_dict
 from rlkit.samplers.data_collector.base import PathCollector
 from rollout_functions import *
 import multiprocessing as mp
+from multiprocessing.dummy import Pool
 
 import pdb
 
@@ -33,20 +34,25 @@ class MdpPathCollector(PathCollector):
 
     def collect_new_paths(self, n_paths, max_path_length, discard_incomplete_paths=False, flatten=False):
         paths = []
-        if self._multithreading:
-            pool = mp.Pool(num_cores)
-            while n_paths > 0:
-                tasks = [(env, eval_policy, max_path_length)] * min(n_paths, max_parallel)
-                paths.extend(pool.starmap(self.rollout_fn, tasks))
-                n_paths -= max_parallel
-            pool.terminate()
-            
-        else:
-            for _ in range(n_paths):
-                path = self._rollout_fn(self._env, self._policy, max_path_length=max_path_length)
-    #             if flatten:
-    #                 paths.extend(path)
-                paths.append(path)
+
+        for _ in range(n_paths):
+            path = self._rollout_fn(self._env, self._policy, max_path_length=max_path_length)
+            # if flatten: paths.extend(path)
+            paths.append(path)
+        
+        self._epoch_paths.extend(paths)
+        return paths
+    
+    def collect_nsteps(self, n_steps, max_path_length, discard_incomplete_paths=False, flatten=False):
+        paths = []
+        count = 0
+        
+        while count < n_steps:
+            path = self._rollout_fn(self._env, self._policy, max_path_length=max_path_length)
+            count += len(path['terminals'])
+            # if flatten: paths.extend(path)
+            paths.append(path)
+        
         self._epoch_paths.extend(paths)
         return paths
     
