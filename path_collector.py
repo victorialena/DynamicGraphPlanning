@@ -5,7 +5,7 @@ import numpy as np
 
 from rlkit.core.eval_util import create_stats_ordered_dict
 from rlkit.samplers.data_collector.base import PathCollector
-from rollout_functions import *
+# from rollout_functions import *
 import multiprocessing as mp
 from multiprocessing.dummy import Pool
 
@@ -23,7 +23,7 @@ Notes:
 """
 
 class MdpPathCollector(PathCollector):
-    def __init__(self, env, policy, max_num_epoch_paths_saved=None, rollout_fn=rollout, parallelize=False):
+    def __init__(self, env, policy, rollout_fn, max_num_epoch_paths_saved:int=None, parallelize:bool=False):
         self._env = env
         self._policy = policy
         self._max_num_epoch_paths_saved = max_num_epoch_paths_saved
