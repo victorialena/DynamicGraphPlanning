@@ -77,6 +77,7 @@ class jobShopScheduling(gym.Env):
     
     ### Comments
     https://medium.datadriveninvestor.com/job-shop-scheduling-problem-jssp-an-overview-cd99970a02f8
+    https://link.springer.com/article/10.1007/s40092-017-0204-z (flexible open shop problem)
     """
 
     def __init__(self, njobs: int, nworkers: int):
@@ -116,7 +117,7 @@ class jobShopScheduling(gym.Env):
         return all(dst != j)
     
     def rollout(self, verbose=False):
-        # Return number of jobs complete if we just waited until all workers exit (done of gridlock)
+        # Return number of jobs complete if we just waited until all workers exit (done if gridlock)
         # Does not take into account discount factor!
         state_hv = deepcopy(self._state.nodes['job'].data['hv'])
         state_he = deepcopy(self._state.nodes['worker'].data['he'])
@@ -126,6 +127,8 @@ class jobShopScheduling(gym.Env):
         reward = torch.tensor([0.])
         src, dst = deepcopy(self._state.edges(etype='processing'))
         sreq, dreq = deepcopy(self._state.edges(etype='precede'))
+        
+        makespan = 0.
         
         while True:
             idx = [dst[src==w][0].item() for w in src.unique().tolist()]
@@ -138,8 +141,10 @@ class jobShopScheduling(gym.Env):
             if verbose:
                 print("executing job", j, "on worker", src[dst==j].item())
             jdone[j] = True
-            reward += 1. + state_hv[j, 6].div(self._dt, rounding_mode='trunc')*self._time_penalty
-            state_hv[idx, 6] -= state_hv[j, 6] #mark that job as done
+            dt = state_hv[j, 6].div(self._dt, rounding_mode='trunc')
+            makespan += dt
+            reward += 1. + dt*self._time_penalty
+            state_hv[idx, 6] -= state_hv[j, 6] # mark that job as done
             
             # remove job from queue
             src = src[dst!=j]
@@ -167,7 +172,7 @@ class jobShopScheduling(gym.Env):
             w, cnts = src.unique(return_counts=True)
             self._state.nodes['worker'].data['he'][w, 0] = cnts.float()
 
-        return reward.item(), all(jdone)
+        return reward.item(), all(jdone), makespan
     
     def get_node_status(self, label, by_index=True):
         mask = self._state.nodes['job'].data['hv'][:, label] == 1
@@ -230,7 +235,7 @@ class jobShopScheduling(gym.Env):
                 
         """ 2) Assure the first job in queue is being processed at this time step. """
         _, req = self._state.edges(etype='precede')
-        # src, dst, cnts = self._state.edges('all', etype='processing') # call again to update processing
+        src, dst, cnts = self._state.edges('all', etype='processing') # call again to update processing
         newidx = [dst[src==w][0].item() for w in src.unique().tolist()]
         newidx = [j for j in newidx if j not in req]
         state_hv[newidx, 4] = 1 # set to processing (but completion % remain 0)
@@ -248,7 +253,7 @@ class jobShopScheduling(gym.Env):
         # a
         processing_mask = state_hv[:, 4] == 1        
         if processing_mask.sum() == 0:
-            return deepcopy(self._state), self._time_penalty, self.terminal(), {'success':False}
+            return deepcopy(self._state), self._time_penalty, self.terminal(), {'success':False, 'makespan':0.}
         
         state_hv[processing_mask, 6] = torch.maximum(state_hv[processing_mask, 6]-self._dt,
                                                      torch.zeros(processing_mask.sum())).round(decimals=2) # update remaining time
@@ -285,14 +290,16 @@ class jobShopScheduling(gym.Env):
         """ 6) Compute reward and terminal state. """
         done = self.terminal()
         success = False
+        makespan = 0.
         n_terminal = len(idx)
         reward = self._time_penalty + n_terminal
         
         if done:
-            r, success = self.rollout()
+            r, success, makespan = self.rollout()
+            makespan += (self._njobs-1) #*self._dt
             reward += r
         
-        return deepcopy(self._state), deepcopy(reward), deepcopy(done), {'success':success}
+        return deepcopy(self._state), deepcopy(reward), deepcopy(done), {'success': success, 'makespan': makespan}
 
     def reset(self, seed: int = None, topology: str = 'random'):
         if not seed == None:

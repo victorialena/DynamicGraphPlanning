@@ -72,6 +72,7 @@ def sample_episode(env, agent, max_path_length:int=100):
     terminals=[]
     
     success=False
+    makespan=0.
     
     for _ in range(max_path_length):
         a = agent.get_action(obs)
@@ -85,6 +86,7 @@ def sample_episode(env, agent, max_path_length:int=100):
         
         obs = nextobs
         success = info['success']
+        makespan = info['makespan']
         
         if done: 
             break
@@ -96,5 +98,6 @@ def sample_episode(env, agent, max_path_length:int=100):
         next_observations=next_observations,
         terminals=terminals,
         success=success,
+        makespan=makespan,
     )
 

@@ -13,6 +13,9 @@ from copy import copy, deepcopy
 
 # ----------------- Helpers
 
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
 def construct_readout_graph(g, etype):
     """ 
     Returns graph of edges to be evalutated, i.e., draw edges from each worker to each job node.
@@ -96,14 +99,14 @@ class dotProductPredictor(nn.Module):
 # ----------------- Model
 
 class hgnn(nn.Module):
-    def __init__(self):
+    def __init__(self, embedding_dim=16):
         super().__init__()
         
-        self.embedding = dglnn.HeteroLinear({'job': 7, 'worker':3}, 16)
+        self.embedding = dglnn.HeteroLinear({'job': 7, 'worker':3}, embedding_dim)
         self.conv = dglnn.HeteroGraphConv({
-            'precede' : dglnn.GraphConv(16, 16),
-            'next' : dglnn.GraphConv(16, 16),
-            'processing' : dglnn.SAGEConv((16, 16), 16, 'mean')},
+            'precede' : dglnn.GraphConv(embedding_dim, embedding_dim),
+            'next' : dglnn.GraphConv(embedding_dim, embedding_dim),
+            'processing' : dglnn.SAGEConv((embedding_dim, embedding_dim), embedding_dim, 'mean')},
             aggregate='sum')
         self.pred = dotProductPredictor()
         
