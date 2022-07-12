@@ -40,6 +40,34 @@ def count_q_length(_from, _to, n):
         counts[_from] = counts[_to]+1
     return counts
 
+# ---------------- Specific Helpers
+
+def get_random_intial_state(nw, nj):
+    """
+    Generate an inital graph / Job shop problem statement, including random dependencies between jobs.
+    """
+    _from, _to = torch.tensor([[0, 0]]+get_random_queues(nj)).T
+
+    graph_data = {
+       ('job', 'precede', 'job'): (_from, _to), # A ---before---> B
+       ('job', 'next', 'job'): (torch.tensor([0]), torch.tensor([0])), # jobshop queue
+       ('worker', 'processing', 'job'): (torch.tensor([0]), torch.tensor([0])) # nothing is scheduled
+    }
+
+    state = dgl.heterograph(graph_data, num_nodes_dict={'worker': nw, 'job': nj})
+    # hack: can not init null vector for edges
+    state.remove_edges(0, 'processing')
+    state.remove_edges(0, 'precede')
+    state.remove_edges(0, 'next')
+
+    times = 0.1*torch.randint(1, 10, (nj,1)) # torch.rand(nj,1)
+    _from, _to = _from[1:], _to[1:]
+    counts = count_q_length(_from, _to, nj).unsqueeze(-1)
+    state.nodes['job'].data['hv'] = torch.cat((times, torch.zeros(nj, 1), counts, torch.zeros(nj, 3), times), 1)
+    state.nodes['worker'].data['he'] = torch.cat((torch.zeros(nw,2), torch.ones(nw,1)), 1)
+
+    return state
+
 # ---------------- Environment
 
 class jobShopScheduling(gym.Env):
@@ -304,28 +332,8 @@ class jobShopScheduling(gym.Env):
     def reset(self, seed: int = None, topology: str = 'random'):
         if not seed == None:
             super().reset(seed=seed)
-        
-        nw, nj = self._nworkers, self._njobs
-        _from, _to = torch.tensor([[0, 0]]+get_random_queues(nj)).T
-        
-        graph_data = {
-           ('job', 'precede', 'job'): (_from, _to), # A ---before---> B
-           ('job', 'next', 'job'): (torch.tensor([0]), torch.tensor([0])), # jobshop queue
-           ('worker', 'processing', 'job'): (torch.tensor([0]), torch.tensor([0])) # nothing is scheduled
-        }
-        
-        self._state = dgl.heterograph(graph_data, num_nodes_dict={'worker': nw, 'job': nj})
-        # hack: can not init null vector for edges
-        self._state.remove_edges(0, 'processing')
-        self._state.remove_edges(0, 'precede')
-        self._state.remove_edges(0, 'next')
                 
-        times = 0.1*torch.randint(1, 10, (nj,1)) # torch.rand(nj,1)
-        _from, _to = _from[1:], _to[1:]
-        counts = count_q_length(_from, _to, nj).unsqueeze(-1)
-        self._state.nodes['job'].data['hv'] = torch.cat((times, torch.zeros(nj, 1), counts, torch.zeros(nj, 3), times), 1)
-        self._state.nodes['worker'].data['he'] = torch.cat((torch.zeros(nw,2), torch.ones(nw,1)), 1)
-        
+        self._state = get_random_intial_state(self._nworkers, self._njobs)
         return deepcopy(self._state)
     
     def dump_state_info(self):
