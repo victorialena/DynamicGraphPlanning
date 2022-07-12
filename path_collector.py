@@ -3,8 +3,9 @@ from functools import partial
 
 import numpy as np
 
-from rlkit.core.eval_util import create_stats_ordered_dict
-from rlkit.samplers.data_collector.base import PathCollector
+from utils.path_collector import *
+#from rlkit.core.eval_util import create_stats_ordered_dict
+#from rlkit.samplers.data_collector.base import PathCollector
 # from rollout_functions import *
 import multiprocessing as mp
 from multiprocessing.dummy import Pool

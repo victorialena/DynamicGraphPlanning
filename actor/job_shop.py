@@ -119,7 +119,8 @@ class hgnn(nn.Module):
         return self.pred(rg, hv, h1['worker'], ('worker', 'processing', 'job'))
     
 # --------------- Agent
-from rlkit.policies.base import Policy
+#from rlkit.policies.base import Policy
+from utils.policy_base import Policy
 
 class epsilonGreedyPolicy(nn.Module, Policy):
     def __init__(self, net, eps=0.1):
