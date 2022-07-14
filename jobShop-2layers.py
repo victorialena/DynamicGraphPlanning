@@ -92,6 +92,8 @@ njobs, nworkers = 30, 15 #25, 10 #50, 20
 env = jobShopScheduling(njobs, nworkers)
 g0 = env.reset()
 
+load_from = "jobshop_qf_j25-w15_4x4_multilayer-from_script"
+
 layersz = 16 #32
 
 qf = hgnn(layersz)
@@ -100,6 +102,10 @@ expl_policy = epsilonGreedyPolicy(qf, .1)
 target_qf = hgnn(layersz)
 eval_policy = epsilonGreedyPolicy(target_qf, 0.)
 
+if load_from:
+    qf.load_state_dict(torch.load("chkpt/job_shop/"+load_from))
+    target_qf.load_state_dict(torch.load("chkpt/job_shop/"+load_from))
+
 expl_path_collector = MdpPathCollector(env, expl_policy, rollout_fn=sample_episode, parallelize=False)
 eval_path_collector = MdpPathCollector(env, eval_policy, rollout_fn=sample_episode, parallelize=False)
 
@@ -107,7 +113,6 @@ replay_buffer_cap = 5000
 replay_buffer = replayBuffer(replay_buffer_cap, prioritized=True)
 
 learning_rate = 8e-5 #1e-4
-
 
 optimizer = Adam(qf.parameters(), lr=learning_rate, weight_decay=0.01)
 qf_criterion = nn.MSELoss()
@@ -182,7 +187,7 @@ for i in range(n_epoch):
 
 
 target_qf.eval()
-torch.save(target_qf.state_dict(), "jobshop_qf_j%d-w%d_4x4_multilayer-from_script" % (njobs, nworkers))
+torch.save(target_qf.state_dict(), "chkpt/job_shop/jobshop_qf_j%d-w%d_4x4_multilayer-from_script" % (njobs, nworkers))
 
 
 # #### Plot
