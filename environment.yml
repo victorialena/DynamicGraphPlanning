@@ -1,4 +1,4 @@
-name: rlpyt
+name: pyg
 channels:
   - pytorch
   - anaconda

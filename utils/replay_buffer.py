@@ -191,7 +191,7 @@ class anyReplayBuffer():
         ])
     
 class replayBuffer():
-    def __init__(self, max_replay_buffer_size, replace = True, prioritized=False):
+    def __init__(self, max_replay_buffer_size, replace=True, prioritized=False):
         self._max_replay_buffer_size = max_replay_buffer_size        
         self._replace = replace
         self._prioritized = prioritized
