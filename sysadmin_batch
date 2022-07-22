@@ -1,0 +1,2 @@
+./run_sysadmin.py --n_nodes 16
+./run_sysadmin.py --n_nodes 32

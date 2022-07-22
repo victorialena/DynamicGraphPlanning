@@ -113,10 +113,10 @@ def main(args):
     for i in range(args.n_epoch):
         qf.train(False)
         paths = eval_path_collector.collect_new_paths(args.n_samples//4, args.max_path_len, False)
-        avg_r_test.append(np.mean([np.mean(p['rewards']) for p in paths]))
+        avg_r_test.append(np.mean([np.sum(p['rewards']) for p in paths]))
 
         paths = expl_path_collector.collect_new_paths(args.n_samples, args.max_path_len, False)
-        avg_r_train.append(np.mean([np.mean(p['rewards']) for p in paths]))
+        avg_r_train.append(np.mean([np.sum(p['rewards']) for p in paths]))
         replay_buffer.add_paths(paths)
 
         qf.train(True)    
@@ -158,20 +158,32 @@ def main(args):
         example_policy = doNothingPolicy(action.noop)
         path_collector = MdpPathCollector(env, example_policy, rollout)
         paths = path_collector.collect_new_paths(args.n_samples//4, args.max_path_len, False)
-        expected_default = np.mean([np.mean(p['rewards']) for p in paths])
+        expected_default = np.mean([np.sum(p['rewards']) for p in paths])
 
         example_policy = sysRolloutPolicy(env.aspace, 0.)
         path_collector = MdpPathCollector(env, example_policy, rollout)
         paths = path_collector.collect_new_paths(args.n_samples//4, args.max_path_len, False)
-        expected_heuristic = np.mean([np.mean(p['rewards']) for p in paths])
+        expected_heuristic = np.mean([np.sum(p['rewards']) for p in paths])
         
-        n_iter, n_epoch = args.n_iter, args.n_epoch
-        plt.plot(np.arange(n_epoch), [expected_default]*(n_epoch), label = "do nothing", color='lightgray')
-        plt.plot(np.arange(n_epoch), [expected_heuristic]*(n_epoch), label = "reboot when dead",  color='darkgray')
-
-        plt.plot(np.arange(n_epoch), avg_r_train, label = "avg R (train)")
-        plt.plot(np.arange(n_epoch), avg_r_test, label = "avg R (test)")
+        losses = [np.mean(loss[i*args.n_iter:(i+1)*args.n_iter]) for i in range(args.n_epoch)]
+        x = np.arange(args.n_epoch)
+        
+        plt.figure(figsize=(20, 8))
+        
+        plt.subplot(121)
+        plt.plot(x, losses)
+        plt.ylabel('Loss')
+        plt.xlabel('Epoch')
+        
+        plt.subplot(122)
+        plt.plot(x, [expected_default]*(args.n_epoch), label = "do nothing", color='lightgray')
+        plt.plot(x, [expected_heuristic]*(args.n_epoch), label = "reboot when dead",  color='darkgray')
+        plt.plot(x, avg_r_train, label = "avg R (train)")
+        plt.plot(x, avg_r_test, label = "avg R (test)")
         plt.legend()
+        plt.ylabel('Reward/Traj')
+        plt.xlabel('Epoch')
+                
         plt.savefig('figs/sys_admin/training_log_sz%d.png' % (args.n_nodes), dpi=300)
 
 device = 'cpu' #torch.cuda.current_device() if torch.cuda.is_available() else 'cpu'
