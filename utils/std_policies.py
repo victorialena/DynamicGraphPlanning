@@ -12,6 +12,22 @@ import networkx as nx
 
 from utils.policy_base import Policy
 
+class doNothingPolicy(nn.Module, Policy):
+    def __init__(self, default):
+        super().__init__()
+        self.default = default
+
+    def get_action(self, obs):
+        return torch.Tensor([self.default]*len(obs.x)).to(torch.int64), {}
+
+class randomPolicy(nn.Module, Policy):
+    def __init__(self, aspace):
+        super().__init__()
+        self.aspace = aspace
+
+    def get_action(self, obs):
+        return torch.tensor(self.aspace.sample()), {} 
+
 class argmaxDiscretePolicy(nn.Module, Policy):
     def __init__(self, qf, dim=1, preprocessing=lambda x: x):
         super().__init__()
@@ -23,14 +39,6 @@ class argmaxDiscretePolicy(nn.Module, Policy):
         q_values = self.qf(*self.preprocessing(obs))
         return q_values.argmax(self.dim), {}
 
-class doNothingPolicy(nn.Module, Policy):
-    def __init__(self, default):
-        super().__init__()
-        self.default = default
-
-    def get_action(self, obs):
-        return torch.Tensor([self.default]*len(obs.x)).to(torch.int64), {}
-    
 class epsilonGreedyPolicy(nn.Module, Policy):
     def __init__(self, qf, space, eps=0.1, dim=1, preprocessing=lambda x: x):
         super().__init__()

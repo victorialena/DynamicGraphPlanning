@@ -113,10 +113,10 @@ def main(args):
     for i in range(args.n_epoch):
         qf.train(False)
         paths = eval_path_collector.collect_new_paths(args.n_samples//4, args.max_path_len, False)
-        avg_r_test.append(np.mean([np.sum(p['rewards']) for p in paths]))
+        avg_r_test.append(avg_cumulative_discounted_r(paths))
 
         paths = expl_path_collector.collect_new_paths(args.n_samples, args.max_path_len, False)
-        avg_r_train.append(np.mean([np.sum(p['rewards']) for p in paths]))
+        avg_r_train.append(avg_cumulative_discounted_r(paths))
         replay_buffer.add_paths(paths)
 
         qf.train(True)    
@@ -158,17 +158,22 @@ def main(args):
         example_policy = doNothingPolicy(action.noop)
         path_collector = MdpPathCollector(env, example_policy, rollout)
         paths = path_collector.collect_new_paths(args.n_samples//4, args.max_path_len, False)
-        expected_default = np.mean([np.sum(p['rewards']) for p in paths])
+        expected_default = avg_cumulative_discounted_r(paths)
 
-        example_policy = sysRolloutPolicy(env.aspace, 0.)
+        example_policy = rebootWhenDead()
         path_collector = MdpPathCollector(env, example_policy, rollout)
         paths = path_collector.collect_new_paths(args.n_samples//4, args.max_path_len, False)
-        expected_heuristic = np.mean([np.sum(p['rewards']) for p in paths])
+        expected_heuristic = avg_cumulative_discounted_r(paths)
+        
+        example_policy = randomPolicy(env.aspace)
+        path_collector = MdpPathCollector(env, example_policy, rollout)
+        paths = path_collector.collect_new_paths(args.n_samples//4, args.max_path_len, False)
+        expected_random = avg_cumulative_discounted_r(paths)
         
         losses = [np.mean(loss[i*args.n_iter:(i+1)*args.n_iter]) for i in range(args.n_epoch)]
         x = np.arange(args.n_epoch)
         
-        plt.figure(figsize=(20, 8))
+        plt.figure(figsize=(20, 6))
         
         plt.subplot(121)
         plt.plot(x, losses)
@@ -176,12 +181,13 @@ def main(args):
         plt.xlabel('Epoch')
         
         plt.subplot(122)
-        plt.plot(x, [expected_default]*(args.n_epoch), label = "do nothing", color='lightgray')
-        plt.plot(x, [expected_heuristic]*(args.n_epoch), label = "reboot when dead",  color='darkgray')
+        plt.plot(x, [expected_default]*(args.n_epoch), label="do nothing", color='lightgray')
+        plt.plot(x, [expected_heuristic]*(args.n_epoch), label="reboot when dead", color='dimgray')
+        plt.plot(x, [expected_random]*(args.n_epoch), label="random", color='darkgray')
         plt.plot(x, avg_r_train, label = "avg R (train)")
         plt.plot(x, avg_r_test, label = "avg R (test)")
         plt.legend()
-        plt.ylabel('Reward/Traj')
+        plt.ylabel('Avg. Cumulative Discounted Reward')
         plt.xlabel('Epoch')
                 
         plt.savefig('figs/sys_admin/training_log_sz%d.png' % (args.n_nodes), dpi=300)

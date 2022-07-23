@@ -130,7 +130,7 @@ class sysAdminProbe(gym.Env):
         self.count = self.count - torch.sum(self.state.x[:, 1] == load.success)
         
         reward = self.reward(a)
-        done = self.count == 0
+        done = self.count <= 0
         x0 = deepcopy(self.state.x[:, 0])
         
         egdes = self.state.edge_index
@@ -215,22 +215,32 @@ class sysAdminProbe(gym.Env):
         
     def seed(self, n: int):
         super().reset(seed=seed)
-        
+
+
+#---------------------------- Helpers
+
+def avg_traj_r(paths):
+    return np.mean([np.sum(p['rewards']) for p in paths])
+
+def cumulative_discounted_sum(vec, gamma):
+    n = len(vec)
+    discounted_vec = (gamma**torch.arange(n))*torch.tensor(vec)
+    return discounted_vec.sum().item()
+
+def avg_cumulative_discounted_r(paths, gamma=.9):
+    return np.mean([cumulative_discounted_sum(p['rewards'], gamma) for p in paths])
+
 #---------------------------- Add ons
 
 from utils.policy_base import Policy
 import torch.nn as nn
 
-class sysRolloutPolicy(nn.Module, Policy):
-    def __init__(self, aspace, eps=0.1):
+class rebootWhenDead(nn.Module, Policy):
+    def __init__(self):
         super().__init__()
-        self.eps = eps
-        self.aspace = aspace
 
     def get_action(self, obs):
-        if rand() < self.eps:
-            return self.aspace.sample(), {}
-        return torch.where(obs.x[:, 0]==status.dead, action.reboot, action.noop), {}    
+        return torch.where(obs.x[:, 0]==status.dead, action.reboot, action.noop), {}
 
 def print_sar(s, a, r):
     colors = np.array(['G', 'F', 'D'])
